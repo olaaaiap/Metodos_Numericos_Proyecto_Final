@@ -25,6 +25,7 @@ dt = 0.03  # Tamaño del paso de tiempo
 
 ## Parametros de la fuente de densidad
 s_dens = 10.0
+s_fuerza = 5.0
 s_radius = res / 15.0
 
 # Estructuras de datos
@@ -57,19 +58,20 @@ def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.te
         d2 = (cx - mx) ** 2 + (cy - my) ** 2 #pitagoras
         if input_data[2] != 0:
             # Decaimiento exponencial
-            if d2 < s_radius:
+            if d2 < s_radius**2: ##prueba olaia (**2).
                 dens[i, j] += dt * densidad * ti.exp(-6 * d2 / s_radius**2)
 
         if input_data[5] != 0:
-                if d2 < s_radius:
-                    vel_u[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2)
-                    vel_v[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2)
+            if d2 < s_radius**2: ##prueba olaia (**2). con esto no sale el punto
+                vel_u[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
+                vel_v[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
     
 
 def init():
     dens.cur.fill(0)
     dens.nxt.fill(0)
-    init_vel()
+    vel_u.fill(0.0)
+    vel_v.fill(0.0)
 
 @ti.kernel  
 def init_vel():
@@ -83,8 +85,6 @@ def init_vel():
 
 def step(input_data):
     add_sources(dens.cur, input_data, vel_u, vel_v)
-    if(input_data[3] != 0 or input_data[4] != 0):
-        debug_velocities()
     set_boundaries(dens.cur)
     for _ in range(100): 
         diffuse_jacobi(dens.cur, dens.nxt)
@@ -94,13 +94,6 @@ def step(input_data):
     set_boundaries(dens.nxt)
     dens.swap()
     
-@ti.kernel
-def debug_velocities():
-    for i, j in vel_u:
-        if vel_u[i, j] != 0.0 or vel_v[i, j] != 0.0:
-            print("i:", i, "j:", j, "vel_u:", vel_u[i, j], "vel_v:", vel_v[i, j])
-    
-      
 
 @ti.kernel
 def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
@@ -223,15 +216,21 @@ def main():
             input_data[2] = 1.0
 
         if window.is_pressed(ti.ui.LMB):
-            input_data[5] = 1.0
+            # input_data[5] = 1.0
 
-            if prev_mouse is not None:
-                input_data[3] = (mouse_xy[0] - prev_mouse[0]) * res
-                input_data[4] = (mouse_xy[1] - prev_mouse[1]) * res
+            # if prev_mouse is not None:
+            #     input_data[3] = (mouse_xy[0] - prev_mouse[0]) * res
+            #     input_data[4] = (mouse_xy[1] - prev_mouse[1]) * res
 
-            prev_mouse = mouse_xy
-        else:
-            prev_mouse = None
+            # prev_mouse = mouse_xy
+            if window.is_pressed(ti.ui.LMB):
+                input_data[5] = 1.0
+                if prev_mouse is not None:
+                    input_data[3] = (mouse_xy[0] - prev_mouse[0])   # <-- sin * res
+                    input_data[4] = (mouse_xy[1] - prev_mouse[1])   # <-- sin * res
+                prev_mouse = mouse_xy
+            else:
+                prev_mouse = None
 
 
         # Simulación (siguiente paso de tiempo)
