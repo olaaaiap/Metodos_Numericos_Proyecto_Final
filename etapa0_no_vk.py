@@ -1,0 +1,99 @@
+# Referencia: https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/ggui_examples/stable_fluid_ggui.py
+
+import numpy as np
+import taichi as ti
+
+arch = ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
+ti.init(arch=arch)
+
+
+class FieldPair:
+    def __init__(self, current_field, next_field):
+        self.cur = current_field
+        self.nxt = next_field
+
+    def swap(self):
+        self.cur, self.nxt = self.nxt, self.cur
+
+
+# Parametros de la simulacion de fluidos
+res = 512  # Resolución del grid
+h = 1 / res  # Tamaño de la celda
+dt = 0.03  # Tamaño del paso de tiempo
+
+## Parametros de la fuente de densidad
+s_dens = 10.0
+s_radius = res / 15.0
+
+# Estructuras de datos
+## Campos de densidad
+_density_field_1 = ti.field(float, shape=(res, res))
+_density_field_2 = ti.field(float, shape=(res, res))
+
+dens = FieldPair(_density_field_1, _density_field_2)
+
+
+@ti.kernel
+def add_sources(dens: ti.template(), input_data: ti.types.ndarray()):
+    for i, j in dens:
+        densidad = input_data[2] * s_dens
+        mx, my = input_data[0], input_data[1]
+        # Centro casilla i,j
+        cx = i + 0.5
+        cy = j + 0.5
+        # Distancia al centro de la casilla (al cuadrado)
+        d2 = (cx - mx) ** 2 + (cy - my) ** 2
+        # Decaimiento exponencial
+        dens[i, j] += dt * densidad * ti.exp(-6 * d2 / s_radius**2)
+
+
+def init():
+    dens.cur.fill(0)
+    dens.nxt.fill(0)
+
+
+def step(input_data):
+    add_sources(dens.cur, input_data)
+
+
+def main():
+    paused = False
+    gui = ti.GUI("Stable Fluids", (res, res))
+
+    # Inicialización
+    init()
+
+    # Bucle Principal
+    while gui.running:
+        # 0: mouse_x 1: mouse_y 2: source_active
+        input_data = np.zeros(3, dtype=np.float32)
+
+        # Input Teclado
+        if gui.get_event(ti.GUI.PRESS):
+            e = gui.event
+            if e.key == ti.ui.ESCAPE:  # ESC para salir
+                break
+            elif e.key == "r":  # 'r' para resetear
+                paused = False
+                init()
+            elif e.key == "p":  # 'p' para pausar/reanudar
+                paused = not paused
+
+        # Input Ratón
+        if gui.is_pressed(ti.GUI.RMB):
+            mouse_xy = gui.get_cursor_pos()
+            input_data[0] = mouse_xy[0] * res
+            input_data[1] = mouse_xy[1] * res
+            input_data[2] = 1.0
+
+        # Simulación (siguiente paso de tiempo)
+        if not paused:
+            step(input_data)
+
+        # Renderizado
+        gui.set_image(dens.cur)
+        gui.show()
+
+
+if __name__ == "__main__":
+    main()
