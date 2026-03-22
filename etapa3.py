@@ -226,8 +226,8 @@ def main():
             if window.is_pressed(ti.ui.LMB):
                 input_data[5] = 1.0
                 if prev_mouse is not None:
-                    input_data[3] = (mouse_xy[0] - prev_mouse[0])   # <-- sin * res
-                    input_data[4] = (mouse_xy[1] - prev_mouse[1])   # <-- sin * res
+                    input_data[3] = (mouse_xy[0] - prev_mouse[0])
+                    input_data[4] = (mouse_xy[1] - prev_mouse[1])
                 prev_mouse = mouse_xy
             else:
                 prev_mouse = None
