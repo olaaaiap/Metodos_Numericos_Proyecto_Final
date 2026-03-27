@@ -5,7 +5,7 @@ import taichi as ti
 
 arch = ti.vulkan if ti._lib.core.with_vulkan() else ti.cuda
 ti.init(arch=arch)
-# ti.init(arch=ti.cpu, debug=True)
+#ti.init(arch=ti.cpu, debug=True)
 
 
 class FieldPair:
@@ -65,6 +65,7 @@ def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.te
             if d2 < s_radius**2: ##prueba olaia (**2). con esto no sale el punto
                 vel_u[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
                 vel_v[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
+                
     
 
 def init():
@@ -127,8 +128,11 @@ def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
 def adveccion(cur: ti.template(), nxt: ti.template()):
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        x = i - dt0 * vel_u[i, j]
-        y = j - dt0 * vel_v[i, j]
+        # x = i - dt0 * vel_u[i, j]
+        # y = j - dt0 * vel_v[i, j]
+        #He tenido que hacer +0.5 para arreglar el problema que la densidad se mueva hacia el corner derecho
+        x = (i + 0.5) - dt0 * vel_u[i, j]
+        y = (j + 0.5) - dt0 * vel_v[i, j]
         nxt[i, j] = bilerp(cur, ti.Vector([x, y]))
 
 @ti.kernel
@@ -189,8 +193,10 @@ def main():
 
     # Inicialización
     init()
-    prev_mouse = None #posicion anterior del raton para calcular el movimiento
-
+    # prev_mouse = None #posicion anterior del raton para calcular el movimiento
+    # prev_pressed = False
+    prev_mouse = ti.Vector([0.0, 0.0])
+    prev_pressed = False
     # Bucle Principal
     while window.running:
         # 0: mouse_x 1: mouse_y 2: source_active 3: fuerza_x 4: fuerza_y 5: fuerza_activa
@@ -215,23 +221,30 @@ def main():
         if window.is_pressed(ti.ui.RMB):
             input_data[2] = 1.0
 
-        if window.is_pressed(ti.ui.LMB):
-            # input_data[5] = 1.0
+        
+        # if window.is_pressed(ti.ui.LMB):
+        #     input_data[5] = 1.0
+        #     if prev_mouse is not None:
+        #         input_data[3] = (mouse_xy[0] - prev_mouse[0])
+        #         input_data[4] = (mouse_xy[1] - prev_mouse[1])
+        #     prev_mouse = mouse_xy
+        # else:
+        #     prev_mouse = None
 
-            # if prev_mouse is not None:
-            #     input_data[3] = (mouse_xy[0] - prev_mouse[0]) * res
-            #     input_data[4] = (mouse_xy[1] - prev_mouse[1]) * res
+       
 
-            # prev_mouse = mouse_xy
-            if window.is_pressed(ti.ui.LMB):
-                input_data[5] = 1.0
-                if prev_mouse is not None:
-                    input_data[3] = (mouse_xy[0] - prev_mouse[0])
-                    input_data[4] = (mouse_xy[1] - prev_mouse[1])
-                prev_mouse = mouse_xy
-            else:
-                prev_mouse = None
+        is_pressed = window.is_pressed(ti.ui.LMB)
+        if is_pressed and not prev_pressed:
+            prev_mouse = mouse_xy
 
+
+        if not is_pressed and prev_pressed:
+            delta = (mouse_xy[0] - prev_mouse[0], mouse_xy[1] - prev_mouse[1])
+            input_data[3] = delta[0]
+            input_data[4] = delta[1]
+            input_data[5] = 1.0
+            
+        prev_pressed = is_pressed
 
         # Simulación (siguiente paso de tiempo)
         if not paused:

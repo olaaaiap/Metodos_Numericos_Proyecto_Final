@@ -198,8 +198,8 @@ def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
 def adveccion(cur: ti.template(), nxt: ti.template(), vel_u: ti.template(), vel_v: ti.template()):
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        x = i - dt0 * vel_u[i, j]
-        y = j - dt0 * vel_v[i, j]
+        x = (i + 0.5) - dt0 * vel_u[i, j]
+        y = (j + 0.5) - dt0 * vel_v[i, j]
 
         #Ajustar los valores para que no se salgan del grid
         x = ti.max(0.5, ti.min(x, res + 0.5))
