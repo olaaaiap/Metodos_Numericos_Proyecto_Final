@@ -21,11 +21,12 @@ class FieldPair:
 res = 512  # Resolución del grid
 N = res + 2 #Nuevo tamaño de grid (con bordes)
 h = 1 / res  # Tamaño de la celda
-dt = 0.03  # Tamaño del paso de tiempo
+# dt = 0.03  # Tamaño del paso de tiempo
+dt = 0.01  # Tamaño del paso de tiempo
 
 ## Parametros de la fuente de densidad
 s_dens = 10.0
-s_fuerza = 5.0
+s_fuerza = 1.0
 s_radius = res / 15.0
 
 # Estructuras de datos
@@ -55,9 +56,19 @@ vel_v = FieldPair(vel_v_1, vel_v0)
 divergence = ti.field(float, shape=(N, N))
 pressure = ti.field(float, shape=(N, N))
 
+# Visualizacion de velocidad: una flecha por cada bloque del grid.
+arrow_stride = 16
+arrow_cols = res // arrow_stride
+arrow_rows = res // arrow_stride
+arrow_count = arrow_cols * arrow_rows
+arrow_begins = ti.Vector.field(2, dtype=ti.f32, shape=arrow_count)
+arrow_ends = ti.Vector.field(2, dtype=ti.f32, shape=arrow_count)
+arrow_scale = 0.006
+
 @ti.kernel
 def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.template(),vel_v: ti.template()):
-    for i, j in dens:
+    #olaia. estaba escribiendo en las ghost cells. for i, j in dens:
+    for i, j in ti.ndrange((1, res+1), (1, res+1)):
         densidad = input_data[2] * s_dens
         mx, my = input_data[0], input_data[1]
         # Centro casilla i,j (una casilla 1pixel->centro=0.5)
@@ -72,8 +83,8 @@ def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.te
 
         if input_data[5] != 0:
             if d2 < s_radius**2: ##prueba olaia (**2).
-                vel_u.cur[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
-                vel_v.cur[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
+                vel_u[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
+                vel_v[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
     
 
 def init():
@@ -87,7 +98,7 @@ def init():
 
     
 def vel_step(input_data):
-    add_sources(dens.cur, input_data, vel_u, vel_v)
+    add_sources(dens.cur, input_data, vel_u.cur, vel_v.cur)
     set_boundaries_reflective(vel_u.cur, vel_v.cur)
 
 
@@ -98,6 +109,8 @@ def vel_step(input_data):
 
         vel_u.swap()
         vel_v.swap()
+        #olaia.prueba
+        set_boundaries_reflective(vel_u.cur, vel_v.cur) 
         
 
     proyeccion(vel_u.cur, vel_v.cur, pressure, divergence)
@@ -112,6 +125,7 @@ def vel_step(input_data):
 
     vel_u.swap()
     vel_v.swap()
+    set_boundaries_reflective(vel_u.cur, vel_v.cur) 
     proyeccion(vel_u.cur, vel_v.cur, pressure, divergence)
 
     #step anterior. calculo de la densidad
@@ -134,12 +148,16 @@ def proyeccion(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template
     set_boundaries(divergence)
     set_boundaries(pressure)
 
-    for _ in range(20):
-        # for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        #     pressure[i, j] = (divergence[i, j] + pressure[i-1, j] + pressure[i+1, j] + pressure[i, j-1] + pressure[i, j+1]) / 4.0
-        resolver_poisson_jacobi(vel_u, vel_v, pressure, divergence)
-        set_boundaries(pressure)
+    # for _ in range(20):
+    #     # for i, j in ti.ndrange((1, res+1), (1, res+1)):
+    #     #     pressure[i, j] = (divergence[i, j] + pressure[i-1, j] + pressure[i+1, j] + pressure[i, j-1] + pressure[i, j+1]) / 4.0
+    #     resolver_poisson_jacobi(pressure, divergence)
+    #     set_boundaries(pressure)
 
+    #olaia
+    for _ in range(50):
+        resolver_poisson_gauss_seidel(pressure, divergence)
+        set_boundaries(pressure)
     # for i, j in ti.ndrange((1, res+1), (1, res+1)):
     #     vel_u[i, j] -= 0.5 * (pressure[i + 1, j] - pressure[i - 1, j]) / h
     #     vel_v[i, j] -= 0.5 * (pressure[i, j + 1] - pressure[i, j - 1]) / h
@@ -148,6 +166,15 @@ def proyeccion(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template
 
     set_boundaries_reflective(vel_u, vel_v)
 
+@ti.kernel
+def resolver_poisson_gauss_seidel(pressure: ti.template(),
+                                 divergence: ti.template()):
+    for i, j in ti.ndrange((1, res+1), (1, res+1)):
+        pressure[i, j] = (
+            divergence[i, j]
+            + pressure[i-1, j] + pressure[i+1, j]
+            + pressure[i, j-1] + pressure[i, j+1]
+        ) / 4.0
 
 @ti.kernel
 def calcular_divergencia(vel_u: ti.template(), vel_v: ti.template(), divergence: ti.template(), pressure: ti.template()):
@@ -157,7 +184,7 @@ def calcular_divergencia(vel_u: ti.template(), vel_v: ti.template(), divergence:
 
 
 @ti.kernel
-def resolver_poisson_jacobi(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template(), divergence: ti.template()):
+def resolver_poisson_jacobi(pressure: ti.template(), divergence: ti.template()):
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         pressure[i, j] = (divergence[i, j] + pressure[i-1, j] + pressure[i+1, j] + pressure[i, j-1] + pressure[i, j+1]) / 4.0
 
@@ -195,16 +222,19 @@ def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
        
  
 @ti.kernel
-def adveccion(cur: ti.template(), nxt: ti.template(), vel_u: ti.template(), vel_v: ti.template()):
+def adveccion(cur: ti.template(), nxt: ti.template(), vel_u_cur: ti.template(), vel_v_cur: ti.template()):
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        x = (i + 0.5) - dt0 * vel_u[i, j]
-        y = (j + 0.5) - dt0 * vel_v[i, j]
+        x = (i + 0.5) - dt0 * vel_u_cur[i, j]
+        y = (j + 0.5) - dt0 * vel_v_cur[i, j]
 
         #Ajustar los valores para que no se salgan del grid
-        x = ti.max(0.5, ti.min(x, res + 0.5))
-        y = ti.max(0.5, ti.min(y, res + 0.5))
+        # x = ti.max(0.5, ti.min(x, res + 0.5))
+        # y = ti.max(0.5, ti.min(y, res + 0.5))
 
+        #olaia. nuevo clamp para que no se salga del grid
+        x = ti.max(1.5, ti.min(x, res - 0.5))
+        y = ti.max(1.5, ti.min(y, res - 0.5))
 
         nxt[i, j] = bilerp(cur, ti.Vector([x, y]))
 
@@ -225,34 +255,38 @@ def set_boundaries(dens: ti.template()):
     dens[res+1, res+1] = 0.5*(dens[res, res+1] + dens[res+1, res])
 
 @ti.kernel
-def set_boundaries_reflective(vel_u: ti.template(), vel_v: ti.template()):
+def set_boundaries_reflective(vel_u_nxt: ti.template(), vel_v_nxt: ti.template()):
     for i in range(1, res + 1):
         #para los bordes horizontales...
-        vel_u[i, 0] = vel_u[i, 1] #...copiar la tangencial
-        vel_v[0, i] = -vel_v[1, i]#...invertir el valor
+        vel_u_nxt[i, 0] = vel_u_nxt[i, 1] #...copiar la tangencial
+        vel_v_nxt[i, 0] = -vel_v_nxt[i, 1]#...invertir el valor
 
-        vel_u[i, res+1] = vel_u[i, res]#...copiar la tangencial
-        vel_v[i, res+1] = -vel_v[i, res]#...invertir el valor
+        vel_u_nxt[i, res+1] = vel_u_nxt[i, res]#...copiar la tangencial
+        vel_v_nxt[i, res+1] = -vel_v_nxt[i, res]#...invertir el valor
 
 
+    for i in range(1, res + 1):
         #para los bordes verticales...
-        vel_u[0,i] = -vel_u[1, i]#...invertir el valor
-        vel_v[0, i] = vel_v[1, i]#...copiar la tangencial
-        vel_u[res+1, i] = -vel_u[res, i]#...invertir el valor
-        vel_v[res+1, i] = vel_v[res, i] #...copiar la tangencial
+        vel_u_nxt[0,i] = -vel_u_nxt[1, i]#...invertir el valor
+        vel_v_nxt[0, i] = vel_v_nxt[1, i]#...copiar la tangencial
+        vel_u_nxt[res+1, i] = -vel_u_nxt[res, i]#...invertir el valor
+        vel_v_nxt[res+1, i] = vel_v_nxt[res, i] #...copiar la tangencial
         
-    #Esquinas: promedio de los vecinos
-    vel_u[0, 0]= 0.5*(vel_u[1, 0] + vel_u[0, 1])
-    vel_v[0, 0]= 0.5*(vel_v[1, 0] + vel_v[0, 1])
+    # Las esquinas se fuerzan a reposo para evitar una fuga diagonal por las ghost cells.
+    # vel_u_nxt[0, 0] = 0.0
+    # vel_v_nxt[0, 0] = 0.0
+    #olaia
+    vel_u_nxt[0, 0] = 0.5*(vel_u_nxt[1,0] + vel_u_nxt[0,1])
+    vel_v_nxt[0, 0] = 0.5*(vel_v_nxt[1,0] + vel_v_nxt[0,1])
 
-    vel_u[0, res+1] = 0.5*(vel_u[1, res+1] + vel_u[0, res])
-    vel_v[0, res+1] = 0.5*(vel_v[1, res+1] + vel_v[0, res])
+    vel_u_nxt[0, res+1] = 0.5*(vel_u_nxt[1, res+1] + vel_u_nxt[0, res])
+    vel_v_nxt[0, res+1] = 0.5*(vel_v_nxt[1, res+1] + vel_v_nxt[0, res])
 
-    vel_u[res+1, 0] = 0.5*(vel_u[res, 0] + vel_u[res+1, 1])
-    vel_v[res+1, 0] = 0.5*(vel_v[res, 0] + vel_v[res+1, 1])
+    vel_u_nxt[res+1, 0] = 0.5*(vel_u_nxt[res, 0] + vel_u_nxt[res+1, 1])
+    vel_v_nxt[res+1, 0] = 0.5*(vel_v_nxt[res, 0] + vel_v_nxt[res+1, 1])
 
-    vel_u[res+1, res+1] = 0.5*(vel_u[res, res+1] + vel_u[res+1, res])
-    vel_v[res+1, res+1] = 0.5*(vel_v[res, res+1] + vel_v[res+1, res])
+    vel_u_nxt[res+1, res+1] = 0.5*(vel_u_nxt[res, res+1] + vel_u_nxt[res+1, res])
+    vel_v_nxt[res+1, res+1] = 0.5*(vel_v_nxt[res, res+1] + vel_v_nxt[res+1, res])
 
 
 @ti.func
@@ -287,7 +321,7 @@ def lerp(vl, vr, frac):
 @ti.func
 def sample(qf, u, v):
     I = ti.Vector([int(u), int(v)])
-    I = ti.max(0, ti.min(res - 1, I))
+    I = ti.max(1, ti.min(res + 1, I))
     return qf[I]
 
 def main():
@@ -343,6 +377,7 @@ def main():
         # Renderizado
         canvas.set_image(dens.cur)
         window.show()
+
 
 
 if __name__ == "__main__":
