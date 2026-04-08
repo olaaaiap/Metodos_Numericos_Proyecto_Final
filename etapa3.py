@@ -108,6 +108,13 @@ def jacobi_iter(cur: ti.template(), nxt: ti.template()):
 
 @ti.kernel
 def advect(cur: ti.template(), nxt: ti.template()):
+    """
+    Función para calcular la advección utilizando el método de semi-Lagraniano (backwards). 
+
+    :param cur: Campo de densidad actual
+    :param nxt: Campo de densidad siguiente
+    """
+
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         x = (i + 0.5) - dt0 * vel_u[i, j]
@@ -116,6 +123,13 @@ def advect(cur: ti.template(), nxt: ti.template()):
 
 @ti.kernel
 def set_boundaries(dens: ti.template()):
+    """
+    Función para establecer las condiciones de frontera en el campo de densidad.
+    Se copian los valores de las celdas adyacentes para los bordes y se calcula el promedio de
+    los valores de los vecinos para las esquinas.
+
+    :param dens: Campo de densidad
+    """
     for i in range(1, res + 1):
         #para los bordes horizontales...
         dens[i, 0] = dens[i, 1] #...copiar el valor de la siguiente fila
@@ -166,7 +180,7 @@ def main():
 
     # Inicialización
     init()
-    prev_mouse = None
+    prev_mouse = ti.Vector([0.0, 0.0])
     # Bucle Principal
     while window.running:
         # 0: mouse_x 1: mouse_y 2: source_active 3: fuerza_x 4: fuerza_y 5: fuerza_activa
@@ -192,14 +206,14 @@ def main():
             input_data[2] = 1.0
 
 
-        if window.is_pressed(ti.ui.LMB):
+        is_pressed = window.is_pressed(ti.ui.LMB)
+       
+        if is_pressed:
+            delta = (mouse_xy[0] - prev_mouse[0], mouse_xy[1] - prev_mouse[1])
+            input_data[3] = delta[0]
+            input_data[4] = delta[1]
             input_data[5] = 1.0
-            if prev_mouse is not None:
-                input_data[3] = (mouse_xy[0] - prev_mouse[0]) * res
-                input_data[4] = (mouse_xy[1] - prev_mouse[1]) * res
-            prev_mouse = mouse_xy
-        else:
-            prev_mouse = None
+        prev_mouse = mouse_xy
    
 
         # Simulación (siguiente paso de tiempo)

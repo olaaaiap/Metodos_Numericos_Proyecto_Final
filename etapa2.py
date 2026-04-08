@@ -61,6 +61,9 @@ def init():
 
 @ti.kernel  
 def init_vel():
+    """
+    Función para inicializar los campos de velocidades en 3 franjas hroizontales.
+    """
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         if j<res/3:
             vel_u[i, j] = -1.0
@@ -116,6 +119,12 @@ def jacobi_iter(cur: ti.template(), nxt: ti.template()):
     
 @ti.kernel
 def advect(cur: ti.template(), nxt: ti.template()):
+    """
+    Función para calcular la advección utilizando el método de semi-Lagraniano (backwards). 
+
+    :param cur: Campo de densidad actual
+    :param nxt: Campo de densidad siguiente
+    """
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         x = (i + 0.5) - dt0 * vel_u[i, j]
@@ -125,6 +134,13 @@ def advect(cur: ti.template(), nxt: ti.template()):
 
 @ti.kernel
 def set_boundaries(dens: ti.template()):
+    """
+    Función para establecer las condiciones de frontera en el campo de densidad.
+    Se copian los valores de las celdas adyacentes para los bordes y se calcula el promedio de
+    los valores de los vecinos para las esquinas.
+
+    :param dens: Campo de densidad
+    """
     for i in range(1, res + 1):
         #para los bordes horizontales...
         dens[i, 0] = dens[i, 1] #...copiar el valor de la siguiente fila

@@ -82,10 +82,15 @@ def init():
 
     
 def vel_step(input_data):
+    """
+    Nueva función step para aplicar la difusión y advección a las velocidades y a las densidades.
+
+    :param input_data: Datos de entrada
+    """
     add_sources(dens.cur, input_data, vel_u.cur, vel_v.cur)
     set_boundaries_reflective(vel_u.cur, vel_v.cur)
 
-
+    #Aplicar difusión a las velocidades
     for _ in range(20): 
         jacobi_iter(vel_u.cur, vel_u.nxt)
         jacobi_iter(vel_v.cur, vel_v.nxt)
@@ -95,10 +100,10 @@ def vel_step(input_data):
         vel_v.swap()
         set_boundaries_reflective(vel_u.cur, vel_v.cur) 
         
-
+    #Aplicar la proyección para obtener un campo de velocidades incompresible
     proyeccion(vel_u.cur, vel_v.cur, pressure, divergence)
 
-
+    #Aplicar la advección a las velocidades
     advect(vel_u.cur, vel_u.nxt, vel_u.cur, vel_v.cur)
     advect(vel_v.cur, vel_v.nxt, vel_u.cur, vel_v.cur)
     set_boundaries_reflective(vel_u.nxt, vel_v.nxt)
@@ -119,6 +124,15 @@ def step():
     
 
 def proyeccion(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template(), divergence: ti.template()):
+    """
+    Función para proyectar el campo de velocidades y obtener un campo incompresible.
+
+    :param vel_u: Campo de velocidad horizontal
+    :param vel_v: Campo de velocidad vertical
+    :param pressure: Campo de presión
+    :param divergence: Campo de divergencia
+    """
+    
     calcular_divergencia(vel_u, vel_v, divergence, pressure)
 
     set_boundaries(divergence)
@@ -128,14 +142,19 @@ def proyeccion(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template
     for _ in range(50):
         resolver_poisson_gauss_seidel(pressure, divergence)
         set_boundaries(pressure)
-    restar_gradiente(vel_u, vel_v, pressure, divergence)
+    restar_gradiente(vel_u, vel_v, pressure)
 
 
     set_boundaries_reflective(vel_u, vel_v)
 
 @ti.kernel
-def resolver_poisson_gauss_seidel(pressure: ti.template(),
-                                 divergence: ti.template()):
+def resolver_poisson_gauss_seidel(pressure: ti.template(), divergence: ti.template()):
+    """
+    Función para resolver la ecuación de Poisson utilizando el método de Gauss-Seidel.
+    
+    :param pressure: Campo de presión
+    :param divergence: Campo de divergencia
+    """
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         pressure[i, j] = (
             divergence[i, j]
@@ -145,19 +164,29 @@ def resolver_poisson_gauss_seidel(pressure: ti.template(),
 
 @ti.kernel
 def calcular_divergencia(vel_u: ti.template(), vel_v: ti.template(), divergence: ti.template(), pressure: ti.template()):
+    """
+    Función para calcular la divergencia del campo de velocidades y preparar el campo de presión para la proyección.
+
+    :param vel_u: Campo de velocidad horizontal
+    :param vel_v: Campo de velocidad vertical
+    :param divergence: Campo de divergencia
+    :param pressure: Campo de presión
+    """
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         divergence[i, j] = -0.5 * h * (vel_u[i + 1, j] - vel_u[i - 1, j] + vel_v[i, j + 1] - vel_v[i, j - 1])
         pressure[i, j] = 0.0
 
 
 @ti.kernel
-def resolver_poisson_jacobi(pressure: ti.template(), divergence: ti.template()):
-    for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        pressure[i, j] = (divergence[i, j] + pressure[i-1, j] + pressure[i+1, j] + pressure[i, j-1] + pressure[i, j+1]) / 4.0
+def restar_gradiente(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template()):
+    
+    """
+    Función para restar el gradiente de presión al campo de velocidades, obteniendo así un campo de velocidades incompresible.
+    :param vel_u: Campo de velocidad horizontal
+    :param vel_v: Campo de velocidad vertical
+    :param pressure: Campo de presión
+    """
 
-
-@ti.kernel
-def restar_gradiente(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template(), divergence: ti.template()):
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         vel_u[i, j] -= 0.5 * (pressure[i + 1, j] - pressure[i - 1, j]) / h
         vel_v[i, j] -= 0.5 * (pressure[i, j + 1] - pressure[i, j - 1]) / h
@@ -190,6 +219,14 @@ def jacobi_iter(cur: ti.template(), nxt: ti.template()):
  
 @ti.kernel
 def advect(cur: ti.template(), nxt: ti.template(), vel_u_cur: ti.template(), vel_v_cur: ti.template()):
+    """
+    Función para calcular la advección utilizando el método de semi-Lagraniano (backwards). 
+
+    :param cur: Campo de densidad actual
+    :param nxt: Campo de densidad siguiente
+    :param vel_u_cur: Campo de velocidad horizontal actual
+    :param vel_v_cur: Campo de velocidad vertical actual
+    """
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         x = (i + 0.5) - dt0 * vel_u_cur[i, j]
@@ -199,6 +236,13 @@ def advect(cur: ti.template(), nxt: ti.template(), vel_u_cur: ti.template(), vel
 
 @ti.kernel
 def set_boundaries(dens: ti.template()):
+    """
+    Función para establecer las condiciones de frontera en el campo de densidad.
+    Se copian los valores de las celdas adyacentes para los bordes y se calcula el promedio de
+    los valores de los vecinos para las esquinas.
+
+    :param dens: Campo de densidad
+    """
     for i in range(1, res + 1):
         #para los bordes horizontales...
         dens[i, 0] = dens[i, 1] #...copiar el valor de la siguiente fila
@@ -215,6 +259,14 @@ def set_boundaries(dens: ti.template()):
 
 @ti.kernel
 def set_boundaries_reflective(vel_u_nxt: ti.template(), vel_v_nxt: ti.template()):
+    """
+    Función para establecer las condiciones de frontera reflectivas en los campos de velocidad.
+    Para los bordes horizontales se copia la componente tangencial y se invierte la normal, y para los bordes verticales se hace lo mismo pero con la componente vertical. 
+    Para las esquinas se calcula el promedio de los vecinos.
+    
+    :param vel_u_nxt: Campo de velocidad horizontal
+    :param vel_v_nxt: Campo de velocidad vertical
+    """
     for i in range(1, res + 1):
         #para los bordes horizontales...
         vel_u_nxt[i, 0] = vel_u_nxt[i, 1] #...copiar la tangencial

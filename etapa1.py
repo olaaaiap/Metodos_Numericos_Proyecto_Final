@@ -93,6 +93,13 @@ def jacobi_iter(cur: ti.template(), nxt: ti.template()):
 
 @ti.kernel
 def set_boundaries(dens: ti.template()):
+    """
+    Función para establecer las condiciones de frontera en el campo de densidad.
+    Se copian los valores de las celdas adyacentes para los bordes y se calcula el promedio de
+    los valores de los vecinos para las esquinas.
+
+    :param dens: Campo de densidad
+    """
     for i in range(1, res + 1):
         #para los bordes horizontales...
         dens[i, 0] = dens[i, 1] #...copiar el valor de la siguiente fila
