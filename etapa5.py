@@ -21,31 +21,24 @@ class FieldPair:
 res = 512  # Resolución del grid
 N = res + 2 #Nuevo tamaño de grid (con bordes)
 h = 1 / res  # Tamaño de la celda
-# dt = 0.03  # Tamaño del paso de tiempo
-dt = 0.01  # Tamaño del paso de tiempo
+dt = 0.03  # Tamaño del paso de tiempo
 
 ## Parametros de la fuente de densidad
 s_dens = 10.0
-s_fuerza = 1.0
+s_fuerza = 5.0
 s_radius = res / 15.0
 
 # Estructuras de datos
-## Campos de densidad
-# _density_field_1 = ti.field(float, shape=(res, res))
-# _density_field_2 = ti.field(float, shape=(res, res))
 ## Campos de densidad con nuevo tamaño de grid
 _density_field_1 = ti.field(float, shape=(N, N))
 _density_field_2 = ti.field(float, shape=(N, N))
 
 dens = FieldPair(_density_field_1, _density_field_2)
 
-# Campos de velocidad
-# vel_u = ti.field(float, shape=(res, res))
-# vel_v = ti.field(float, shape=(res, res))
 # campos de velocidad con nuevo tamaño de grid
 vel_u_1 = ti.field(float, shape=(N, N))
 vel_v_1 = ti.field(float, shape=(N, N))
-# valriables para guardar el estado anterior
+# variables para guardar el estado anterior
 vel_u0 = ti.field(float, shape=(N, N))
 vel_v0 = ti.field(float, shape=(N, N))
 #Convertir a Fieldpair para no tener que copiar vel_u a vel_u0
@@ -56,18 +49,9 @@ vel_v = FieldPair(vel_v_1, vel_v0)
 divergence = ti.field(float, shape=(N, N))
 pressure = ti.field(float, shape=(N, N))
 
-# Visualizacion de velocidad: una flecha por cada bloque del grid.
-arrow_stride = 16
-arrow_cols = res // arrow_stride
-arrow_rows = res // arrow_stride
-arrow_count = arrow_cols * arrow_rows
-arrow_begins = ti.Vector.field(2, dtype=ti.f32, shape=arrow_count)
-arrow_ends = ti.Vector.field(2, dtype=ti.f32, shape=arrow_count)
-arrow_scale = 0.006
 
 @ti.kernel
 def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.template(),vel_v: ti.template()):
-    #olaia. estaba escribiendo en las ghost cells. for i, j in dens:
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         densidad = input_data[2] * s_dens
         mx, my = input_data[0], input_data[1]
@@ -78,11 +62,11 @@ def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.te
         d2 = (cx - mx) ** 2 + (cy - my) ** 2 #pitagoras
         if input_data[2] != 0:
             # Decaimiento exponencial
-            if d2 < s_radius**2: ##prueba olaia (**2). Aumentar el tamaño del circulo
+            if d2 < s_radius**2: 
                 dens[i, j] += dt * densidad * ti.exp(-6 * d2 / s_radius**2)
 
         if input_data[5] != 0:
-            if d2 < s_radius**2: ##prueba olaia (**2).
+            if d2 < s_radius**2:
                 vel_u[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
                 vel_v[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
     
@@ -103,24 +87,20 @@ def vel_step(input_data):
 
 
     for _ in range(20): 
-        diffuse_jacobi(vel_u.cur, vel_u.nxt)
-        diffuse_jacobi(vel_v.cur, vel_v.nxt)
+        jacobi_iter(vel_u.cur, vel_u.nxt)
+        jacobi_iter(vel_v.cur, vel_v.nxt)
         set_boundaries_reflective(vel_u.nxt, vel_v.nxt)
 
         vel_u.swap()
         vel_v.swap()
-        #olaia.prueba
         set_boundaries_reflective(vel_u.cur, vel_v.cur) 
         
 
     proyeccion(vel_u.cur, vel_v.cur, pressure, divergence)
 
-    #olaia prueba. no se si estos swaps hacen falta
-    # vel_u.swap()
-    # vel_v.swap()
 
-    adveccion(vel_u.cur, vel_u.nxt, vel_u.cur, vel_v.cur)
-    adveccion(vel_v.cur, vel_v.nxt, vel_u.cur, vel_v.cur)
+    advect(vel_u.cur, vel_u.nxt, vel_u.cur, vel_v.cur)
+    advect(vel_v.cur, vel_v.nxt, vel_u.cur, vel_v.cur)
     set_boundaries_reflective(vel_u.nxt, vel_v.nxt)
 
     vel_u.swap()
@@ -129,38 +109,25 @@ def vel_step(input_data):
     proyeccion(vel_u.cur, vel_v.cur, pressure, divergence)
 
     #step anterior. calculo de la densidad
-    for _ in range(20): 
-        diffuse_jacobi(dens.cur, dens.nxt)
-        set_boundaries(dens.nxt)
-        dens.swap()
-    adveccion(dens.cur, dens.nxt, vel_u.cur, vel_v.cur)
+    step()
+
+def step():
+    diffuse(dens)
+    advect(dens.cur, dens.nxt, vel_u.cur, vel_v.cur)
     set_boundaries(dens.nxt)
     dens.swap()
-
+    
 
 def proyeccion(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.template(), divergence: ti.template()):
-    
-    # for i, j in ti.ndrange((1, res+1), (1, res+1)):
-    #     divergence[i, j] = -0.5 * h * (vel_u[i + 1, j] - vel_u[i - 1, j] + vel_v[i, j + 1] - vel_v[i, j - 1])
-    #     pressure[i, j] = 0.0
     calcular_divergencia(vel_u, vel_v, divergence, pressure)
 
     set_boundaries(divergence)
     set_boundaries(pressure)
 
-    # for _ in range(20):
-    #     # for i, j in ti.ndrange((1, res+1), (1, res+1)):
-    #     #     pressure[i, j] = (divergence[i, j] + pressure[i-1, j] + pressure[i+1, j] + pressure[i, j-1] + pressure[i, j+1]) / 4.0
-    #     resolver_poisson_jacobi(pressure, divergence)
-    #     set_boundaries(pressure)
-
-    #olaia
+    
     for _ in range(50):
         resolver_poisson_gauss_seidel(pressure, divergence)
         set_boundaries(pressure)
-    # for i, j in ti.ndrange((1, res+1), (1, res+1)):
-    #     vel_u[i, j] -= 0.5 * (pressure[i + 1, j] - pressure[i - 1, j]) / h
-    #     vel_v[i, j] -= 0.5 * (pressure[i, j + 1] - pressure[i, j - 1]) / h
     restar_gradiente(vel_u, vel_v, pressure, divergence)
 
 
@@ -195,9 +162,15 @@ def restar_gradiente(vel_u: ti.template(), vel_v: ti.template(), pressure: ti.te
         vel_u[i, j] -= 0.5 * (pressure[i + 1, j] - pressure[i - 1, j]) / h
         vel_v[i, j] -= 0.5 * (pressure[i, j + 1] - pressure[i, j - 1]) / h
 
+def diffuse(dens):
+    for _ in range(20): 
+        jacobi_iter(dens.cur, dens.nxt)
+        set_boundaries(dens.nxt)
+        dens.swap()
+
 
 @ti.kernel
-def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
+def jacobi_iter(cur: ti.template(), nxt: ti.template()):
     """
     Función para calcular la difusión utilizando el método de Jacobi.
     La ecuación de difusión es inestable cuando k*dt/h**2 > 0.5. 
@@ -209,32 +182,18 @@ def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
     """
     k = 1e-4
     alpha = k*dt/(h*h)
-    #version sin set_boundaries
-    # for i, j in ti.ndrange(res, res):
-    #     if 0 < i < res-1 and 0 < j < res-1:
-    #         nxt[i, j] = ((cur[i, j] + alpha * (cur[i-1, j] + cur[i+1, j] + cur[i, j-1] + cur[i, j+1]))/(1+4*alpha)) 
-    #     else:
-    #         nxt[i, j] = cur[i, j]
     
-    #nueva version: version con set_boundaries
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         nxt[i, j] = ((cur[i, j] + alpha * (cur[i-1, j] + cur[i+1, j] + cur[i, j-1] + cur[i, j+1]))/(1+4*alpha)) 
        
+
  
 @ti.kernel
-def adveccion(cur: ti.template(), nxt: ti.template(), vel_u_cur: ti.template(), vel_v_cur: ti.template()):
+def advect(cur: ti.template(), nxt: ti.template(), vel_u_cur: ti.template(), vel_v_cur: ti.template()):
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         x = (i + 0.5) - dt0 * vel_u_cur[i, j]
         y = (j + 0.5) - dt0 * vel_v_cur[i, j]
-
-        #Ajustar los valores para que no se salgan del grid
-        # x = ti.max(0.5, ti.min(x, res + 0.5))
-        # y = ti.max(0.5, ti.min(y, res + 0.5))
-
-        #olaia. nuevo clamp para que no se salga del grid
-        x = ti.max(1.5, ti.min(x, res - 0.5))
-        y = ti.max(1.5, ti.min(y, res - 0.5))
 
         nxt[i, j] = bilerp(cur, ti.Vector([x, y]))
 
@@ -272,10 +231,7 @@ def set_boundaries_reflective(vel_u_nxt: ti.template(), vel_v_nxt: ti.template()
         vel_u_nxt[res+1, i] = -vel_u_nxt[res, i]#...invertir el valor
         vel_v_nxt[res+1, i] = vel_v_nxt[res, i] #...copiar la tangencial
         
-    # Las esquinas se fuerzan a reposo para evitar una fuga diagonal por las ghost cells.
-    # vel_u_nxt[0, 0] = 0.0
-    # vel_v_nxt[0, 0] = 0.0
-    #olaia
+    
     vel_u_nxt[0, 0] = 0.5*(vel_u_nxt[1,0] + vel_u_nxt[0,1])
     vel_v_nxt[0, 0] = 0.5*(vel_v_nxt[1,0] + vel_v_nxt[0,1])
 
@@ -289,14 +245,6 @@ def set_boundaries_reflective(vel_u_nxt: ti.template(), vel_v_nxt: ti.template()
     vel_v_nxt[res+1, res+1] = 0.5*(vel_v_nxt[res, res+1] + vel_v_nxt[res+1, res])
 
 
-@ti.func
-def debug(x,y):
-    print("valor:", x, y) 
-
-@ti.func
-def debugtxt(txt):
-    print(txt) 
-    
 @ti.func
 def bilerp(vf, pressure):
     u, v = pressure
@@ -331,7 +279,7 @@ def main():
 
     # Inicialización
     init()
-    prev_mouse = None #posicion anterior del raton para calcular el movimiento
+    prev_mouse = None
 
     # Bucle Principal
     while window.running:
@@ -346,7 +294,7 @@ def main():
             elif e.key == "r":  # 'r' para resetear
                 paused = False
                 init()
-            elif e.key == "pressure":  # 'pressure' para pausar/reanudar
+            elif e.key == "p":  # 'p' para pausar/reanudar
                 paused = not paused
 
         mouse_xy = window.get_cursor_pos()

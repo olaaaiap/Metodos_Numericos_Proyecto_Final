@@ -28,9 +28,6 @@ s_dens = 10.0
 s_radius = res / 15.0
 
 # Estructuras de datos
-## Campos de densidad
-# _density_field_1 = ti.field(float, shape=(res, res))
-# _density_field_2 = ti.field(float, shape=(res, res))
 ## Campos de densidad con nuevo tamaño de grid
 _density_field_1 = ti.field(float, shape=(N, N))
 _density_field_2 = ti.field(float, shape=(N, N))
@@ -40,7 +37,7 @@ dens = FieldPair(_density_field_1, _density_field_2)
 
 @ti.kernel
 def add_sources(dens: ti.template(), input_data: ti.types.ndarray()):
-    for i, j in dens:
+    for i, j in ti.ndrange((1, res+1), (1, res+1)):
         if input_data[2] != 0:
             densidad = input_data[2] * s_dens
             mx, my = input_data[0], input_data[1]
@@ -63,15 +60,21 @@ def init():
 def step(input_data):
     add_sources(dens.cur, input_data)
     set_boundaries(dens.cur)
-    for _ in range(100): 
-        diffuse_jacobi(dens.cur, dens.nxt)
-        set_boundaries(dens.nxt)
-        dens.swap()
+    diffuse(dens)
     
 
 
+def diffuse(dens):
+    for _ in range(100):
+        jacobi_iter(dens.cur, dens.nxt)
+        set_boundaries(dens.nxt)
+        dens.swap()
+
+
+
+
 @ti.kernel
-def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
+def jacobi_iter(cur: ti.template(), nxt: ti.template()):
     """
     Función para calcular la difusión utilizando el método de Jacobi.
     La ecuación de difusión es inestable cuando k*dt/h**2 > 0.5. 
@@ -83,14 +86,7 @@ def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
     """
     k = 1e-4
     alpha = k*dt/(h*h)
-    #version sin set_boundaries
-    # for i, j in ti.ndrange(res, res):
-    #     if 0 < i < res-1 and 0 < j < res-1:
-    #         nxt[i, j] = ((cur[i, j] + alpha * (cur[i-1, j] + cur[i+1, j] + cur[i, j-1] + cur[i, j+1]))/(1+4*alpha)) 
-    #     else:
-    #         nxt[i, j] = cur[i, j]
     
-    #nueva version: version con set_boundaries
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         nxt[i, j] = ((cur[i, j] + alpha * (cur[i-1, j] + cur[i+1, j] + cur[i, j-1] + cur[i, j+1]))/(1+4*alpha)) 
        
@@ -101,6 +97,8 @@ def set_boundaries(dens: ti.template()):
         #para los bordes horizontales...
         dens[i, 0] = dens[i, 1] #...copiar el valor de la siguiente fila
         dens[i, res+1] = dens[i, res]#...copiar el valor de la anterior fila
+    
+    for i in range(1, res + 1):
         #para los bordes verticales...
         dens[0, i] = dens[1, i]#...copiar el valor de la siguiente columna
         dens[res+1, i] = dens[res, i] #...copiar el valor de la anterior columna
@@ -111,44 +109,12 @@ def set_boundaries(dens: ti.template()):
     dens[res+1, 0] = 0.5*(dens[res, 0] + dens[res+1, 1])
     dens[res+1, res+1] = 0.5*(dens[res, res+1] + dens[res+1, res])
 
-@ti.func
-def debug(x,y):
-    print("valor:", x, y) 
-
-@ti.func
-def debugtxt(txt):
-    print(txt) 
-    
-@ti.func
-def bilerp(vf, p):
-    u, v = p
-    s, t = u - 0.5, v - 0.5
-    # floor
-    iu, iv = ti.floor(s), ti.floor(t)
-    # fract
-    fu, fv = s - iu, t - iv
-    a = sample(vf, iu, iv)
-    b = sample(vf, iu + 1, iv)
-    c = sample(vf, iu, iv + 1)
-    d = sample(vf, iu + 1, iv + 1)
-    return lerp(lerp(a, b, fu), lerp(c, d, fu), fv)
-
-
-@ti.func
-def lerp(vl, vr, frac):
-    # frac: [0.0, 1.0]
-    return vl + frac * (vr - vl)
-
-
-@ti.func
-def sample(qf, u, v):
-    I = ti.Vector([int(u), int(v)])
-    I = ti.max(0, ti.min(res - 1, I))
-    return qf[I]
+   
 
 def main():
     paused = False
-    window = ti.ui.Window("Stable Fluids", (res, res), vsync=True)
+    window = ti.ui.Window("Stable Fluids", (N, N), vsync=True)
+
     canvas = window.get_canvas()
 
     # Inicialización

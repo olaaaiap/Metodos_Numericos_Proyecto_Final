@@ -29,18 +29,12 @@ s_fuerza = 5.0
 s_radius = res / 15.0
 
 # Estructuras de datos
-## Campos de densidad
-# _density_field_1 = ti.field(float, shape=(res, res))
-# _density_field_2 = ti.field(float, shape=(res, res))
 ## Campos de densidad con nuevo tamaño de grid
 _density_field_1 = ti.field(float, shape=(N, N))
 _density_field_2 = ti.field(float, shape=(N, N))
 
 dens = FieldPair(_density_field_1, _density_field_2)
 
-# Campos de velocidad
-# vel_u = ti.field(float, shape=(res, res))
-# vel_v = ti.field(float, shape=(res, res))
 # campos de velocidad con nuevo tamaño de grid
 vel_u = ti.field(float, shape=(N, N))
 vel_v = ti.field(float, shape=(N, N))
@@ -48,7 +42,7 @@ vel_v = ti.field(float, shape=(N, N))
 
 @ti.kernel
 def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.template(),vel_v: ti.template()):
-    for i, j in dens:
+    for i, j in ti.ndrange((1, res+1), (1, res+1)):
         densidad = input_data[2] * s_dens
         mx, my = input_data[0], input_data[1]
         # Centro casilla i,j (una casilla 1pixel->centro=0.5)
@@ -58,11 +52,11 @@ def add_sources(dens: ti.template(), input_data: ti.types.ndarray(),vel_u: ti.te
         d2 = (cx - mx) ** 2 + (cy - my) ** 2 #pitagoras
         if input_data[2] != 0:
             # Decaimiento exponencial
-            if d2 < s_radius**2: ##prueba olaia (**2).
+            if d2 < s_radius**2: 
                 dens[i, j] += dt * densidad * ti.exp(-6 * d2 / s_radius**2)
 
         if input_data[5] != 0:
-            if d2 < s_radius**2: ##prueba olaia (**2). con esto no sale el punto
+            if d2 < s_radius**2:
                 vel_u[i, j] += input_data[3] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
                 vel_v[i, j] += input_data[4] * ti.exp(-6 * d2 / s_radius**2) * s_fuerza
                 
@@ -74,30 +68,26 @@ def init():
     vel_u.fill(0.0)
     vel_v.fill(0.0)
 
-@ti.kernel  
-def init_vel():
-    for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        #Inicializar las velocidades a cero
-        vel_u[i, j] = 0.0
-        vel_v[i, j] = 0.0
-        
-
-
 
 def step(input_data):
     add_sources(dens.cur, input_data, vel_u, vel_v)
     set_boundaries(dens.cur)
-    for _ in range(100): 
-        diffuse_jacobi(dens.cur, dens.nxt)
-        set_boundaries(dens.nxt)
-        dens.swap()
-    adveccion(dens.cur, dens.nxt)
+    diffuse(dens)
+    advect(dens.cur, dens.nxt)
     set_boundaries(dens.nxt)
     dens.swap()
     
+    
+def diffuse(dens):
+    for _ in range(100):
+        jacobi_iter(dens.cur, dens.nxt)
+        set_boundaries(dens.nxt)
+        dens.swap()
+
+      
 
 @ti.kernel
-def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
+def jacobi_iter(cur: ti.template(), nxt: ti.template()):
     """
     Función para calcular la difusión utilizando el método de Jacobi.
     La ecuación de difusión es inestable cuando k*dt/h**2 > 0.5. 
@@ -109,28 +99,17 @@ def diffuse_jacobi(cur: ti.template(), nxt: ti.template()):
     """
     k = 1e-4
     alpha = k*dt/(h*h)
-    #version sin set_boundaries
-    # for i, j in ti.ndrange(res, res):
-    #     if 0 < i < res-1 and 0 < j < res-1:
-    #         nxt[i, j] = ((cur[i, j] + alpha * (cur[i-1, j] + cur[i+1, j] + cur[i, j-1] + cur[i, j+1]))/(1+4*alpha)) 
-    #     else:
-    #         nxt[i, j] = cur[i, j]
     
-    #nueva version: version con set_boundaries
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
         nxt[i, j] = ((cur[i, j] + alpha * (cur[i-1, j] + cur[i+1, j] + cur[i, j-1] + cur[i, j+1]))/(1+4*alpha)) 
        
 
 
 
-    
 @ti.kernel
-def adveccion(cur: ti.template(), nxt: ti.template()):
+def advect(cur: ti.template(), nxt: ti.template()):
     dt0 = dt * res
     for i, j in ti.ndrange((1, res+1), (1, res+1)):
-        # x = i - dt0 * vel_u[i, j]
-        # y = j - dt0 * vel_v[i, j]
-        #He tenido que hacer +0.5 para arreglar el problema que la densidad se mueva hacia el corner derecho
         x = (i + 0.5) - dt0 * vel_u[i, j]
         y = (j + 0.5) - dt0 * vel_v[i, j]
         nxt[i, j] = bilerp(cur, ti.Vector([x, y]))
@@ -151,17 +130,10 @@ def set_boundaries(dens: ti.template()):
     dens[res+1, 0] = 0.5*(dens[res, 0] + dens[res+1, 1])
     dens[res+1, res+1] = 0.5*(dens[res, res+1] + dens[res+1, res])
 
-@ti.func
-def debug(x,y):
-    print("valor:", x, y) 
-
-@ti.func
-def debugtxt(txt):
-    print(txt) 
     
 @ti.func
-def bilerp(vf, p):
-    u, v = p
+def bilerp(vf, pressure):
+    u, v = pressure
     s, t = u - 0.5, v - 0.5
     # floor
     iu, iv = ti.floor(s), ti.floor(t)
@@ -183,8 +155,9 @@ def lerp(vl, vr, frac):
 @ti.func
 def sample(qf, u, v):
     I = ti.Vector([int(u), int(v)])
-    I = ti.max(0, ti.min(res - 1, I))
+    I = ti.max(1, ti.min(res + 1, I))
     return qf[I]
+
 
 def main():
     paused = False
@@ -193,10 +166,7 @@ def main():
 
     # Inicialización
     init()
-    # prev_mouse = None #posicion anterior del raton para calcular el movimiento
-    # prev_pressed = False
-    prev_mouse = ti.Vector([0.0, 0.0])
-    prev_pressed = False
+    prev_mouse = None
     # Bucle Principal
     while window.running:
         # 0: mouse_x 1: mouse_y 2: source_active 3: fuerza_x 4: fuerza_y 5: fuerza_activa
@@ -221,30 +191,16 @@ def main():
         if window.is_pressed(ti.ui.RMB):
             input_data[2] = 1.0
 
-        
-        # if window.is_pressed(ti.ui.LMB):
-        #     input_data[5] = 1.0
-        #     if prev_mouse is not None:
-        #         input_data[3] = (mouse_xy[0] - prev_mouse[0])
-        #         input_data[4] = (mouse_xy[1] - prev_mouse[1])
-        #     prev_mouse = mouse_xy
-        # else:
-        #     prev_mouse = None
 
-       
-
-        is_pressed = window.is_pressed(ti.ui.LMB)
-        if is_pressed and not prev_pressed:
-            prev_mouse = mouse_xy
-
-
-        if not is_pressed and prev_pressed:
-            delta = (mouse_xy[0] - prev_mouse[0], mouse_xy[1] - prev_mouse[1])
-            input_data[3] = delta[0]
-            input_data[4] = delta[1]
+        if window.is_pressed(ti.ui.LMB):
             input_data[5] = 1.0
-            
-        prev_pressed = is_pressed
+            if prev_mouse is not None:
+                input_data[3] = (mouse_xy[0] - prev_mouse[0]) * res
+                input_data[4] = (mouse_xy[1] - prev_mouse[1]) * res
+            prev_mouse = mouse_xy
+        else:
+            prev_mouse = None
+   
 
         # Simulación (siguiente paso de tiempo)
         if not paused:
