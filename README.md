@@ -1,5 +1,9 @@
 # MENU proyecto final
 
+VIDEO
+
+https://youtu.be/Bo4WJFE8wgI
+
 Implementación del algoritmo **Stable Fluids** con Taichi.
 
 
